@@ -1,0 +1,164 @@
+// Modified RRAM Stanford Verilog-A Model:
+// Antonio Cantudo <cantudo@ugr.es> # University of Granada, November 2025
+// Based on original model from Stanford University:
+// https://nano.stanford.edu/downloads/stanford-rram-model
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module rram_stanford(TE, BE);
+	inout	TE, BE;
+	electrical	TE, BE;
+	//electrical TE, gap_out;
+
+	// Switch to select Standard Model (0) or Dynamic Model (1)
+	
+	//  The following constants have been pre-defined in the constants.vams
+	//  Boltzmann's constant in joules/kelvin, 'parameter real kb =  1.3806503e-23'
+	parameter real kb = `P_K;
+
+	//  charge of electron in coulombs, 'parameter real q =  1.6e-19'
+	parameter real q = `P_Q;
+	
+	//  average switching fitting parameters g0, V0, I0, beta, gamma0
+	parameter real g0 = 4.43025e-11 from(0:2e-9);
+	parameter real V0 = 1.3254 from(0:10);
+	parameter real Vel0 = 783029.19 from(0:inf);
+	parameter real I0 = 0.1206 from(0:100);
+	parameter real beta = 22.260869565217394 from(0:inf);
+	parameter real alpha = 3 from(0:inf);
+	parameter real gamma0 = 2.096 from(0:inf);
+	parameter real gamma_smoothing = 1e-4 from(0.0:inf);
+    parameter real r_series = 0 from[0:inf);
+	
+	
+	//  minimum field requirement to enhance gap formation, F_min
+	
+	//  initial gap distance, gap_ini
+	parameter real gap_ini = 2.84225e-10 from(0:100e-10);
+	
+	//  minimum gap distance, gap_min
+	parameter real gap_min = 5e-14 from(0:100e-10);
+	
+	//  maximum gap distance, gap_max
+	parameter real gap_max = 4.25e-10 from(0:100e-10);
+
+	//  Version Parameter
+	real version = 1.00;
+	
+	integer model_switch = 0;
+	
+	//  threshold temperature for significant random variations
+	real T_crit = 450;
+	
+	//  variations fitting parameters
+	real deltaGap0 = 0.02;
+	
+	real T_smth = 500;
+	
+	real Ea = 0.6;
+	
+	//  atom spacing, a0
+	real a0 = 0.25e-9;
+	
+	//  initial room temperature in devices
+	real T_ini = 273 + 25;
+	
+	real F_min = 1.4e9;
+	
+	//  thermal resistance
+	real Rth = 2.1e3;
+
+	//  oxide thickness, thickness
+	real tox = 1e-9;
+	// parameter real tox = 12e-9;
+	
+	// initial random seed
+	integer rand_seed_ini	= 0;
+
+	// time step boundary
+	real time_step = 100e-6;
+
+
+
+	//  voltage V(TE, BE), Vtb; current I(TE, BE), Itb
+	real Vtb, Itb;  
+
+	//  present temperature in devices, temp
+	real T_cur;
+	
+	//  gap time derivative, gap_ddt; random gap time derivative, gap_random_ddt
+	real gap_ddt, gap_random_ddt;
+	
+	//  present gap status
+	real gap;
+	
+	//  local enhancement factor, gamma
+	real gamma;
+	real gamma_ini;
+
+	//  random number
+	integer rand_seed;
+	real deltaGap;
+
+	analog function real mon_tanh;
+		input x;
+		real x;
+		real exp_p, exp_m;
+		begin
+			exp_p = exp(x);
+			exp_m = exp(-x);
+			mon_tanh = (exp_p - exp_m)/(exp_p + exp_m);
+		end
+	endfunction
+
+	// tanh smoothing function
+	analog function real tanh_smooth;
+		input y0, y1, pos, smoothing;
+		real y0, y1, pos, smoothing;
+		real w;
+		begin
+			w = (1 + tanh(pos / smoothing)) / 2;
+			tanh_smooth = y0 * (1 - w) + y1 * w;
+		end
+	endfunction
+
+	analog begin
+		// bound time step
+		$bound_step(time_step);
+		
+		// present Vtb, Itb, and local device temperation calculation, T_cur
+		Itb = I(TE,BE);
+		Vtb = V(TE,BE) - Itb * r_series;
+		T_cur = T_ini + abs( Vtb * Itb * Rth);
+		
+		// initialize random seed, rand_seed
+		@(initial_step)
+		begin
+			rand_seed = rand_seed_ini;
+		end
+
+		gamma_ini = gamma0;	
+		gamma = gamma_ini - beta * pow((( gap )/1e-9), alpha);
+
+		// tanh smoothing for gamma
+		gamma = tanh_smooth(0, gamma, gamma * abs( Vtb )/ tox - F_min, gamma_smoothing);
+
+		
+		// calculate next time step gap situation
+		// gap time derivative - determinant part
+		gap_ddt = -Vel0 * exp(- q * Ea / kb / T_cur) * sinh(gamma * a0 / tox * q * Vtb / kb / T_cur);
+
+		gap_ddt = tanh_smooth(0, gap_ddt, gap_max - gap, 1e-8);
+		gap_ddt = tanh_smooth(0, gap_ddt, gap - gap_min, 1e-8);
+		
+		// gap time derivative - variation part
+		deltaGap = deltaGap0 * model_switch;
+		gap_random_ddt = $rdist_normal(rand_seed, 0, 1) * deltaGap / (1 + exp((T_crit - T_cur)/T_smth));
+		gap = idt(gap_ddt + gap_random_ddt, gap_ini);
+
+		Itb = I0 * exp(-gap/g0)*sinh(Vtb/V0);
+
+		I(TE,BE) <+ Itb;
+	end
+endmodule
