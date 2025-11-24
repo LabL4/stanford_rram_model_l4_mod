@@ -2,6 +2,8 @@
 // Antonio Cantudo <cantudo@ugr.es> # University of Granada, November 2025
 // Based on original model from Stanford University:
 // https://nano.stanford.edu/downloads/stanford-rram-model
+// Series resistance modifications published in:
+// https://doi.org/10.1063/5.0055982
 
 `include "constants.vams"
 `include "disciplines.vams"
